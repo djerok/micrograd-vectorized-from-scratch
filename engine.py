@@ -114,29 +114,32 @@ class Tensor:
                 topo.append(v)
         build_topo(self)
 
-        self.grad = 1
+        self.grad = xp.ones_like(self.data) 
         for v in reversed(topo):
             v._backward()
     def __repr__(self):
             where = 'gpu' if ON_GPU else 'cpu'
-            return f'Tensor(shape={self.data.shape}, {where})'
+            return f'{self.data}'
     
 class Layer:
-    def __init__(self, nin, nout):
+    def __init__(self, nin, nout, act=True):
         self.w = Tensor(xp.random.uniform(-1, 1, (nin, nout)) * nin ** -0.5)
         self.b = Tensor(xp.zeros(nout))
+        self.act = act
 
     def __call__(self, x):
-        return (x @ self.w + self.b).tanh()
+        out = x @ self.w + self.b
+        return out.tanh() if self.act else out
 
     def parameters(self):
         return [self.w, self.b]
 
 
 class MLP:
-    def __init__(self, nin, nouts):
+    def __init__(self, nin, nouts, afunc = True):
         sz = [nin] + list(nouts)
-        self.layers = [Layer(sz[i], sz[i + 1]) for i in range(len(nouts))]
+        last = len(nouts) - 1
+        self.layers = [Layer(sz[i], sz[i + 1], act=(i != last or afunc)) for i in range(len(nouts))]
 
     def __call__(self, x):
         for layer in self.layers:
@@ -147,7 +150,7 @@ class MLP:
         return [p for l in self.layers for p in l.parameters()]
 
 
-def bench(X=  xp.random.uniform(0, 1, (1024, 784)), T = xp.random.uniform(-1, 1, (1024, 10)), bnum = 32, nin=784, hidden = [256], nout=10, epoch = 20, seed = 0 ):
+def bench(X=  xp.random.uniform(0, 1, (1024, 784)), T = xp.random.uniform(-1, 1, (1024, 10)), bnum = 32, nin=784, hidden = [256], nout=10, epoch = 20, seed = 0, actout = False, smax = True):
     import time
     size = X.shape[0]
     X = X.reshape(size, -1) 
@@ -156,7 +159,7 @@ def bench(X=  xp.random.uniform(0, 1, (1024, 784)), T = xp.random.uniform(-1, 1,
     sz = hidden + [nout]
     xp.random.seed(seed)
     
-    m = MLP(nin, sz)
+    m = MLP(nin, sz, afunc = actout)
     P = m.parameters()
     #warmup for the engine on the GPU
     for _ in range(3):             
@@ -190,11 +193,11 @@ def bench(X=  xp.random.uniform(0, 1, (1024, 784)), T = xp.random.uniform(-1, 1,
     print(f'      total steps{steps*epoch} over {epoch}epochs and {steps}step each')
     print(f'              {steps*epoch} steps in {dt:.3f}s  =  {dt/(steps*epoch)*1000:.2f} ms/step')
     print(f'              {bnum*steps*epoch/dt:,.0f} images/sec')
-    return 0
+    return m
 
 
 if __name__ == '__main__':
     print('cupy available:', ON_GPU)
     if not ON_GPU:
         print('  -> running on numpy. pip install cupy-cuda12x for the GPU path.')
-    _bench()
+    bench()

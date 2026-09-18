@@ -62,17 +62,39 @@ for p in m.parameters():
     p.data -= 0.01 * p.grad / 32
 ```
 
-Built-in benchmark, which also serves as a full training loop:
+Built-in benchmark, which also serves as a full training loop and returns the trained model:
 
 ```python
-bench(X, T, bnum=32, nin=784, hidden=[256], nout=10, epoch=20)
+m = bench(X, T, bnum=32, nin=784, hidden=[256], nout=10, epoch=20, actout=False)
 ```
 
-`X` is `(n, features)` and `T` is `(n, outputs)`, both plain numpy. For MNIST:
+`X` is `(n, features)` and `T` is `(n, outputs)`, both plain numpy. It reshapes `X` for you
+but does not rescale it — normalize before calling. For MNIST:
 
 ```python
-bench(images.reshape(len(images), 784) / 255, np.eye(10)[labels] * 2 - 1)
+m = bench(images / 255, np.eye(10)[labels] * 2 - 1)
+
+Xt = Tensor(test.reshape(len(test), 784) / 255)
+pred = m(Xt).numpy().argmax(axis=1)
+print((pred == test_labels).mean())
 ```
+
+## Output activation
+
+`Layer` takes `act=True`; `MLP` takes `afunc`, which decides whether the **final** layer gets
+tanh:
+
+```python
+self.layers = [Layer(sz[i], sz[i+1], act=(i != last or afunc)) for i in range(len(nouts))]
+```
+
+Hidden layers always get tanh — without a nonlinearity between them, `x @ w1 @ w2` collapses
+to a single linear layer and the hidden units buy nothing.
+
+The output layer is a choice. tanh there caps outputs at `(-1, 1)`, and its derivative
+`1 - tanh²` goes to zero exactly when a prediction is confidently wrong, so those cases
+barely learn. `afunc=False` leaves the last layer linear, which removes that term from the
+gradient. `argmax` is unaffected either way, since tanh is monotonic.
 
 ## CPU or GPU
 
@@ -113,9 +135,9 @@ Without cupy installed, it falls back to numpy and still works.
 | `Tensor` | array + gradient + graph edges + `_backward` closure |
 | `_unbroadcast` | the part that doesn't exist in the scalar version (see below) |
 | `__matmul__` | new op; backward is two more matmuls, via transposes |
-| `Layer` | `w` is `(nin, nout)` — one **column** per neuron |
-| `MLP` | stack of layers |
-| `bench` | batched training loop with timing |
+| `Layer` | `w` is `(nin, nout)` — one **column** per neuron; `act` toggles tanh |
+| `MLP` | stack of layers; `afunc` controls the output layer's activation |
+| `bench` | batched training loop with timing, returns the trained model |
 
 There is no `Neuron` class. A neuron is column `j` of `w`; 256 neurons is
 `w.shape[1] == 256`. Architecture stops being Python class structure and becomes array
@@ -161,7 +183,28 @@ w2.grad   mine -8.95719337   torch -8.95719242   diff 9.54e-07
 b2.grad   mine 12.25293159   torch 12.25293255   diff 9.54e-07
 ```
 
+Both activation modes match:
+
+```
+tanh out    loss 7.296915  torch 7.296914   max grad diff 9.54e-07
+linear out  loss 7.299898  torch 7.299898   max grad diff 9.54e-07
+```
+
 Every difference is float32 rounding.
+
+Speed against PyTorch on the same net (784→256→10, tanh, MSE, SGD), CPU,
+forward + backward + update:
+
+| batch | this engine | torch | ratio |
+|---|---|---|---|
+| 32 | 3.20 ms | 0.26 ms | 12.1x |
+| 256 | 3.19 ms | 0.59 ms | 5.4x |
+| 1024 | 9.30 ms | 1.81 ms | 5.1x |
+| 4096 | 32.43 ms | 4.84 ms | 6.7x |
+
+The remaining gap is memory, not algorithm: every intermediate here allocates a full
+`zeros_like` gradient array that torch never creates, and `x @ w + b` is two kernels where
+torch fuses one `addmm`.
 
 ## Requirements
 
