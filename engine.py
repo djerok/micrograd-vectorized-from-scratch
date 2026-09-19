@@ -118,7 +118,6 @@ class Tensor:
         for v in reversed(topo):
             v._backward()
     def __repr__(self):
-            where = 'gpu' if ON_GPU else 'cpu'
             return f'{self.data}'
     
 class Layer:
@@ -150,7 +149,7 @@ class MLP:
         return [p for l in self.layers for p in l.parameters()]
 
 
-def bench(X=  xp.random.uniform(0, 1, (1024, 784)), T = xp.random.uniform(-1, 1, (1024, 10)), bnum = 32, nin=784, hidden = [256], nout=10, epoch = 20, seed = 0, actout = False, smax = True):
+def bench(X=  xp.random.uniform(0, 1, (1024, 784)), T = xp.random.uniform(-1, 1, (1024, 10)), bnum = 32, nin=784, hidden = [256], nout=10, epoch = 20, seed = 0, actout = False):
     import time
     size = X.shape[0]
     X = X.reshape(size, -1) 
